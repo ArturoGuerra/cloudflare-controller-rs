@@ -1,0 +1,146 @@
+{
+  "apiVersion": "apiextensions.k8s.io/v1",
+  "kind": "CustomResourceDefinition",
+  "metadata": {
+    "name": "tunnelingress.cloudflare.ar2ro.io"
+  },
+  "spec": {
+    "group": "cloudflare.ar2ro.io",
+    "names": {
+      "categories": [],
+      "kind": "TunnelIngress",
+      "plural": "tunnelingress",
+      "shortNames": [],
+      "singular": "tunnelingress"
+    },
+    "scope": "Namespaced",
+    "versions": [
+      {
+        "additionalPrinterColumns": [],
+        "name": "v1",
+        "schema": {
+          "openAPIV3Schema": {
+            "description": "Custom resource representation of a Cloudflare Tunnel Ingress Rule",
+            "properties": {
+              "spec": {
+                "properties": {
+                  "hostname": {
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "originRequest": {
+                    "nullable": true,
+                    "properties": {
+                      "access": {
+                        "nullable": true,
+                        "properties": {
+                          "audTag": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "required": {
+                            "type": "boolean"
+                          },
+                          "teamName": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "audTag",
+                          "required",
+                          "teamName"
+                        ],
+                        "type": "object"
+                      },
+                      "caPool": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "connectionTimeout": {
+                        "format": "int32",
+                        "type": "integer"
+                      },
+                      "disableChunkedEncoding": {
+                        "type": "boolean"
+                      },
+                      "http2origin": {
+                        "type": "boolean"
+                      },
+                      "httpHostHeader": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "keepAliveConnections": {
+                        "format": "int32",
+                        "type": "integer"
+                      },
+                      "keepAliveTimeout": {
+                        "format": "int32",
+                        "type": "integer"
+                      },
+                      "noHappyEyeballs": {
+                        "type": "boolean"
+                      },
+                      "noTlsVerify": {
+                        "type": "boolean"
+                      },
+                      "originServerName": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "proxyType": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "tcpKeepAlive": {
+                        "format": "int32",
+                        "type": "integer"
+                      },
+                      "tlsTimeout": {
+                        "format": "int32",
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "connectionTimeout",
+                      "disableChunkedEncoding",
+                      "http2origin",
+                      "keepAliveConnections",
+                      "keepAliveTimeout",
+                      "noHappyEyeballs",
+                      "noTlsVerify",
+                      "tcpKeepAlive",
+                      "tlsTimeout"
+                    ],
+                    "type": "object"
+                  },
+                  "path": {
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "service": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "service"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "spec"
+            ],
+            "title": "TunnelIngress",
+            "type": "object"
+          }
+        },
+        "served": true,
+        "storage": true,
+        "subresources": {}
+      }
+    ]
+  }
+}

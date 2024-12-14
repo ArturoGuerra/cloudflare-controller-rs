@@ -1,0 +1,30 @@
+[package]
+name = "cloudflare-tunnel-operator-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.94"
+async-trait = "0.1.83"
+clap = { version = "4.5.23", features = ["derive"] }
+cloudflare = { path = "../cloudflare-rs/cloudflare", features = ["blocking"] }
+futures = "0.3.31"
+itertools = "0.13.0"
+k8s-openapi = { version = "0.23.0", features = ["latest"] }
+kube = { version = "0.97.0", features = [
+    "client",
+    "runtime",
+    "admission",
+    "derive",
+] }
+kube-derive = "0.97.0"
+reqwest = { version = "0.11.4", features = ["json"] }
+schemars = "0.8.21"
+serde = { version = "1.0.215", features = ["derive"] }
+serde_as = "0.0.1"
+serde_json = "1.0.133"
+serde_with = "3.11.0"
+serde_yaml = "0.9.34"
+thiserror = "2.0.6"
+tokio = { version = "1.42.0", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1.11.0", features = ["v4"] }
