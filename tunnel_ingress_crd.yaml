@@ -122,10 +122,14 @@
                   },
                   "service": {
                     "type": "string"
+                  },
+                  "tunnel": {
+                    "type": "string"
                   }
                 },
                 "required": [
-                  "service"
+                  "service",
+                  "tunnel"
                 ],
                 "type": "object"
               }
@@ -137,6 +141,11 @@
             "type": "object"
           }
         },
+        "selectableFields": [
+          {
+            "jsonPath": ".spec.tunnel"
+          }
+        ],
         "served": true,
         "storage": true,
         "subresources": {}

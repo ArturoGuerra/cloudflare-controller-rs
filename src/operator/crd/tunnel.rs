@@ -1,21 +1,27 @@
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
-use kube::CustomResource;
+use crate::operator::controller::Context;
+use kube::api::{Patch, PatchParams};
+use kube::{Api, CustomResource};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
+use uuid::Uuid;
+
+const FINALIZER_NAME: &str = "tunnel.cloudflare.ar2ro.io/finalizer";
 
 #[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[kube(
     group = "cloudflare.ar2ro.io",
     version = "v1",
-    kind = "CfTunnel",
+    kind = "Tunnel",
     doc = "Custom resource representation of a Cloudflare Tunnel",
-    status = "TunnelStatus",
     scale = r#"{"specReplicasPath":".spec.replicas", "statusReplicasPath":".status.replicas"}"#,
     namespaced
 )]
 pub struct TunnelCrd {
+    pub uuid: Option<Uuid>,
     pub replicas: i32,
     pub credentials: String,
     #[serde(default)]
@@ -25,36 +31,49 @@ pub struct TunnelCrd {
     pub tags: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TunnelStatus {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schemars(schema_with = "conditions")]
-    pub conditions: Vec<Condition>,
+pub async fn add_finalizer(
+    name: &str,
+    namespace: &str,
+    context: Arc<Context>,
+) -> Result<Tunnel, kube::Error> {
+    let tunnel_api: Api<Tunnel> = Api::namespaced(context.kubernetes_client.clone(), namespace);
+
+    let patch: Value = json!({
+        "metadata": {
+            "finalizers": [FINALIZER_NAME]
+        }
+    });
+
+    let patch: Patch<&Value> = Patch::Merge(&patch);
+    match tunnel_api
+        .patch(name, &PatchParams::default(), &patch)
+        .await
+    {
+        Ok(tunnel) => Ok(tunnel),
+        Err(err) => Err(err),
+    }
 }
 
-pub fn conditions(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-    serde_json::from_value(serde_json::json!({
-        "type": "array",
-        "x-kubernetes-list-type": "map",
-        "x-kubernetes-list-map-keys": ["type"],
-        "items": {
-            "type": "object",
-            "properties": {
-                "lastTransitionTime": { "format": "date-time", "type": "string" },
-                "message": { "type": "string" },
-                "observedGeneration": { "type": "integer", "format": "int64", "default": 0 },
-                "reason": { "type": "string" },
-                "status": { "type": "string" },
-                "type": { "type": "string" }
-            },
-            "required": [
-                "lastTransitionTime",
-                "message",
-                "reason",
-                "status",
-                "type"
-            ],
-        },
-    }))
-    .unwrap()
+pub async fn remove_finalizer(
+    name: &str,
+    namespace: &str,
+    context: Arc<Context>,
+) -> Result<(), kube::Error> {
+    let tunnel_api: Api<Tunnel> = Api::namespaced(context.kubernetes_client.clone(), namespace);
+
+    let patch: Value = json!({
+        "metadata": {
+            "finalizers": null,
+       }
+    });
+
+    let patch: Patch<&Value> = Patch::Merge(&patch);
+
+    match tunnel_api
+        .patch(name, &PatchParams::default(), &patch)
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err),
+    }
 }

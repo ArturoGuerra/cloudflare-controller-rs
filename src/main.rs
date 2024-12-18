@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
     file.write_all(credentials_crd.into_bytes().as_ref())
         .unwrap();
 
-    let tunnels_crd = serde_json::to_string_pretty(&operator::crd::tunnel::CfTunnel::crd())?;
+    let tunnels_crd = serde_json::to_string_pretty(&operator::crd::tunnel::Tunnel::crd())?;
 
     let mut file = File::create("./tunnels_crd.yaml").expect("unable to create file");
 

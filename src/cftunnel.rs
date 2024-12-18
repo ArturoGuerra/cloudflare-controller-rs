@@ -1,7 +1,8 @@
+use crate::operator::crd::credentials::{self, Credentials as CredentialsCrd};
 use async_trait::async_trait;
 use cloudflare::{
     endpoints::cfd_tunnel::{
-        create_tunnel, delete_tunnel, get_configuration, get_tunnel_token, update_configuration,
+        create_tunnel, delete_tunnel, get_tunnel, get_tunnel_token, update_configuration,
         ConfigurationSrc, Tunnel, TunnelConfiguration, TunnelToken,
     },
     framework::{
@@ -13,35 +14,48 @@ use cloudflare::{
 };
 use uuid::Uuid;
 
+pub struct Auth {
+    account_id: String,
+    kind: Credentials,
+}
+
+impl From<CredentialsCrd> for Auth {
+    fn from(s: CredentialsCrd) -> Auth {
+        let account_id = s.spec.account_id;
+        let kind = match s.spec.auth {
+            credentials::AuthKind::ServiceKey(key) => Credentials::Service { key },
+            credentials::AuthKind::UserAuthKey { email, key } => {
+                Credentials::UserAuthKey { email, key }
+            }
+            credentials::AuthKind::UserAuthToken(token) => Credentials::UserAuthToken { token },
+        };
+
+        Auth { account_id, kind }
+    }
+}
+
 #[async_trait]
 pub trait CloudflareTunnel: Send + Sync {
     async fn create_tunnel<'a>(
         &self,
-        account_id: &str,
-        credentials: &Credentials,
+        auth: &Auth,
         name: &str,
         tunnel_secret: Option<&'a [u8]>,
         config_src: ConfigurationSrc,
-    ) -> anyhow::Result<Tunnel>;
-    async fn delete_tunnel(
-        &self,
-        account_id: &str,
-        credentials: &Credentials,
-        tunnel_id: Uuid,
-    ) -> anyhow::Result<()>;
+    ) -> Result<Tunnel, ApiFailure>;
+    async fn delete_tunnel(&self, auth: &Auth, tunnel_id: Uuid) -> Result<(), ApiFailure>;
     async fn update_configuration(
         &self,
-        account_id: &str,
-        credentials: &Credentials,
+        auth: &Auth,
         tunnel_id: Uuid,
         config: TunnelConfiguration,
-    ) -> anyhow::Result<Option<TunnelConfiguration>>;
+    ) -> Result<Option<TunnelConfiguration>, ApiFailure>;
     async fn get_tunnel_token(
         &self,
-        account_id: &str,
-        credentials: &Credentials,
+        auth: &Auth,
         tunnel_id: &str,
-    ) -> anyhow::Result<TunnelToken>;
+    ) -> Result<TunnelToken, ApiFailure>;
+    async fn get_tunnel(&self, auth: &Auth, tunnel_id: &str) -> Result<Tunnel, ApiFailure>;
 }
 
 pub struct Client {
@@ -95,12 +109,11 @@ impl Client {
 impl CloudflareTunnel for Client {
     async fn create_tunnel<'a>(
         &self,
-        account_id: &str,
-        credentials: &Credentials,
+        auth: &Auth,
         name: &str,
         tunnel_secret: Option<&'a [u8]>,
         config_src: ConfigurationSrc,
-    ) -> anyhow::Result<Tunnel> {
+    ) -> Result<Tunnel, ApiFailure> {
         let params = create_tunnel::Params {
             name,
             tunnel_secret,
@@ -109,72 +122,77 @@ impl CloudflareTunnel for Client {
         };
 
         let endpoint = create_tunnel::CreateTunnel {
-            account_identifier: account_id,
+            account_identifier: &auth.account_id,
             params,
         };
 
-        match self.request(credentials, &endpoint).await {
+        match self.request(&auth.kind, &endpoint).await {
             Ok(result) => Ok(result.result),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(err),
         }
     }
 
-    async fn delete_tunnel(
-        &self,
-        account_id: &str,
-        credentials: &Credentials,
-        tunnel_id: Uuid,
-    ) -> anyhow::Result<()> {
+    async fn delete_tunnel(&self, auth: &Auth, tunnel_id: Uuid) -> Result<(), ApiFailure> {
         let params = delete_tunnel::Params { cascade: true };
 
         let tunnel_id = tunnel_id.to_string();
         let endpoint = delete_tunnel::DeleteTunnel {
-            account_identifier: account_id,
+            account_identifier: &auth.account_id,
             tunnel_id: &tunnel_id,
             params,
         };
 
-        match self.request(credentials, &endpoint).await {
+        match self.request(&auth.kind, &endpoint).await {
             Ok(_) => Ok(()),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(err),
         }
     }
 
     async fn update_configuration(
         &self,
-        account_id: &str,
-        credentials: &Credentials,
+        auth: &Auth,
         tunnel_id: Uuid,
         config: TunnelConfiguration,
-    ) -> anyhow::Result<Option<TunnelConfiguration>> {
+    ) -> Result<Option<TunnelConfiguration>, ApiFailure> {
         let params = update_configuration::Params { config };
 
         let endpoint = update_configuration::UpdateTunnelConfiguration {
-            account_identifier: account_id,
+            account_identifier: &auth.account_id,
             tunnel_id,
             params,
         };
 
-        match self.request(credentials, &endpoint).await {
+        match self.request(&auth.kind, &endpoint).await {
             Ok(res) => Ok(res.result.config),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(err),
         }
     }
 
     async fn get_tunnel_token(
         &self,
-        account_id: &str,
-        credentials: &Credentials,
+        auth: &Auth,
         tunnel_id: &str,
-    ) -> anyhow::Result<TunnelToken> {
+    ) -> Result<TunnelToken, ApiFailure> {
         let endpoint = get_tunnel_token::TunnelToken {
-            account_identifier: account_id,
+            account_identifier: &auth.account_id,
             tunnel_id,
         };
 
-        match self.request::<TunnelToken>(credentials, &endpoint).await {
+        match self.request::<TunnelToken>(&auth.kind, &endpoint).await {
             Ok(res) => Ok(res.result),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn get_tunnel(&self, auth: &Auth, tunnel_id: &str) -> Result<Tunnel, ApiFailure> {
+        let endpoint = get_tunnel::GetTunnel {
+            account_identifier: &auth.account_id,
+            tunnel_id,
+        };
+
+        match self.request::<Tunnel>(&auth.kind, &endpoint).await {
+            Ok(res) => Ok(res.result),
+            Err(err) => Err(err),
         }
     }
 }
@@ -192,6 +210,6 @@ async fn map_api_response<ResultType: ApiResult>(
     } else {
         let parsed: Result<ApiErrors, reqwest::Error> = resp.json().await;
         let errors = parsed.unwrap_or_default();
-        Err(ApiFailure::Error(status.into(), errors))
+        Err(ApiFailure::Error(status, errors))
     }
 }

@@ -1,8 +1,7 @@
-use kube::runtime::controller::Action;
-
 use crate::operator::controller::Context;
 use crate::operator::crd::tunnel_configuration::TunnelIngress;
 use crate::operator::Error;
+use kube::runtime::controller::Action;
 use std::sync::Arc;
 use tokio::time::Duration;
 

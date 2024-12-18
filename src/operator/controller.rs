@@ -1,6 +1,6 @@
 use crate::cftunnel::Client as CloudflareClient;
 use crate::operator::crd::{
-    credentials::Credentials, tunnel::CfTunnel, tunnel_configuration::TunnelIngress,
+    credentials::Credentials, tunnel::Tunnel, tunnel_configuration::TunnelIngress,
 };
 use futures::StreamExt;
 use futures::{future::select_all, Future};
@@ -22,7 +22,7 @@ pub struct Context {
     pub kubernetes_client: Client,
     pub cloudflare_client: CloudflareClient,
     pub credentials_api: Api<Credentials>,
-    pub tunnel_api: Api<CfTunnel>,
+    pub tunnel_api: Api<Tunnel>,
     pub tunnel_ingress_api: Api<TunnelIngress>,
 }
 
@@ -30,6 +30,10 @@ impl Controller {
     pub async fn try_default() -> anyhow::Result<Self> {
         let context = Context::try_default().await?;
         Ok(Self(Arc::new(context)))
+    }
+
+    pub fn get_context(&self) -> Arc<Context> {
+        self.0.clone()
     }
 
     async fn tunnel_controller(&self) {
@@ -46,7 +50,12 @@ impl Controller {
                 tunnel_controller::on_err,
                 self.0.clone(),
             )
-            .for_each(|result| async move { println!("{:?}", result) })
+            .for_each(|result| async move {
+                match result {
+                    Ok(result) => println!("Successfully reconciled tunnel: {:?}", result),
+                    Err(err) => println!("Failed to reconcile tunnel: {:?}", err),
+                }
+            })
             .await;
     }
 
@@ -60,7 +69,12 @@ impl Controller {
                 tunnel_ingress_controller::on_err,
                 self.0.clone(),
             )
-            .for_each(|result| async move { println!("{:?}", result) })
+            .for_each(|result| async move {
+                match result {
+                    Ok(result) => println!("Successfully reconciled tunnel ingress: {:?}", result),
+                    Err(err) => println!("Failed to reconcile tunnel ingress: {:?}", err),
+                }
+            })
             .await;
     }
 
@@ -91,7 +105,7 @@ impl Context {
         let cloudflare_client = CloudflareClient::try_default()?;
 
         let credentials_api: Api<Credentials> = Api::all(kubernetes_client.clone());
-        let tunnel_api: Api<CfTunnel> = Api::all(kubernetes_client.clone());
+        let tunnel_api: Api<Tunnel> = Api::all(kubernetes_client.clone());
         let tunnel_ingress_api: Api<TunnelIngress> = Api::all(kubernetes_client.clone());
 
         Ok(Self {
