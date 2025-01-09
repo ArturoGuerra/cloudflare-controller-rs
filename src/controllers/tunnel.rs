@@ -1,21 +1,49 @@
-use crate::cftunnel::{Auth, CloudflareTunnel};
-use crate::operator::controller::Context;
-use crate::operator::crd::tunnel::{self, Tunnel};
-use crate::operator::resources::{deployment, secret};
-use crate::operator::Error;
+use crate::cloudflare::{Auth, Client as CloudflareClient, CloudflareTunnel};
+use crate::crd::tunnel::{self, Tunnel};
+use crate::crd::{credentials::Credentials, tunnel_configuration::TunnelIngress};
+use crate::resources::{deployment, secret};
 use cloudflare::endpoints::cfd_tunnel::ConfigurationSrc;
 use cloudflare::framework::response::ApiFailure;
+use futures::{Future, StreamExt};
+use k8s_openapi::api::{
+    apps::v1::Deployment,
+    core::v1::{ConfigMap, Secret},
+};
 use k8s_openapi::ByteString;
 use kube::api::{Patch, PatchParams};
 use kube::core::object::HasSpec;
 use kube::runtime::controller::Action;
-use kube::{Api, Resource, ResourceExt};
+use kube::{
+    client::Client, runtime::watcher::Config, runtime::Controller as KubeController, Api, Resource,
+    ResourceExt,
+};
 use reqwest::StatusCode;
 use std::collections::BTreeMap;
+use std::future::IntoFuture;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::time::Duration;
 
+use crate::controllers::Controller;
+
 const RECONCILE_TIMER: u64 = 60;
+
+/// All errors possible to occur during reconciliation
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    // Any error originating from the `kube-rs` crate
+    #[error("Kubernetes reported error: {0}")]
+    KubeError(#[from] kube::Error),
+    // Any error that the cloudflare api returns
+    #[error("Cloudflare api returned an error {0}")]
+    CloudflareApiFailure(#[from] ApiFailure),
+    #[error("missing namespace for resource {0}")]
+    MissingNamespace(&'static str),
+    #[error("Missing credentials CRD {0}")]
+    MissingCredentials(String),
+}
+
+pub struct TunnelController(Arc<Context>);
 
 #[derive(Debug)]
 enum TunnelAction {
@@ -34,6 +62,14 @@ impl From<&Arc<Tunnel>> for TunnelAction {
             TunnelAction::Sync
         }
     }
+}
+
+pub struct Context {
+    pub kubernetes_client: Client,
+    pub cloudflare_client: CloudflareClient,
+    pub credentials_api: Api<Credentials>,
+    pub tunnel_api: Api<Tunnel>,
+    pub tunnel_ingress_api: Api<TunnelIngress>,
 }
 
 #[inline]
@@ -240,5 +276,68 @@ pub fn on_err(_generator: Arc<Tunnel>, error: &Error, _ctx: Arc<Context>) -> Act
             Action::requeue(Duration::from_secs(120))
         }
         _ => Action::await_change(),
+    }
+}
+
+impl TunnelController {
+    pub fn get_context(&self) -> Arc<Context> {
+        self.0.clone()
+    }
+
+    async fn start(self) -> anyhow::Result<()> {
+        println!("Starting Tunnel Controller");
+        let deployment_api: Api<Deployment> = Api::all(self.0.kubernetes_client.clone());
+        let configmap_api: Api<ConfigMap> = Api::all(self.0.kubernetes_client.clone());
+        let secret_api: Api<Secret> = Api::all(self.0.kubernetes_client.clone());
+        KubeController::new(self.0.tunnel_api.clone(), Config::default())
+            .owns(deployment_api, Config::default())
+            .owns(configmap_api, Config::default())
+            .owns(secret_api, Config::default())
+            .run(reconciler, on_err, self.0.clone())
+            .for_each(|result| async move {
+                match result {
+                    Ok(result) => println!("Successfully reconciled tunnel: {:?}", result),
+                    Err(err) => println!("Failed to reconcile tunnel: {:?}", err),
+                }
+            })
+            .await;
+
+        Ok(())
+    }
+}
+
+#[allow(refining_impl_trait)]
+impl Controller for TunnelController {
+    async fn try_default() -> anyhow::Result<impl Controller + IntoFuture> {
+        let context = Context::try_default().await?;
+        Ok(Self(Arc::new(context)))
+    }
+}
+
+impl IntoFuture for TunnelController {
+    type Output = anyhow::Result<()>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output>>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.start())
+    }
+}
+
+impl Context {
+    pub async fn try_default() -> anyhow::Result<Self> {
+        let kubernetes_client = Client::try_default().await?;
+        let cloudflare_client = CloudflareClient::try_default()?;
+
+        let credentials_api: Api<Credentials> = Api::all(kubernetes_client.clone());
+        let tunnel_api: Api<Tunnel> = Api::all(kubernetes_client.clone());
+        let tunnel_ingress_api: Api<TunnelIngress> = Api::all(kubernetes_client.clone());
+
+        Ok(Self {
+            kubernetes_client,
+            cloudflare_client,
+            credentials_api,
+            tunnel_api,
+            tunnel_ingress_api,
+        })
     }
 }

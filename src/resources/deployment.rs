@@ -1,5 +1,5 @@
-use crate::operator::controller::Context;
-use crate::operator::crd::tunnel::Tunnel;
+use crate::controllers::tunnel::Context;
+use crate::crd::tunnel::Tunnel;
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::core::v1::{
     ConfigMapEnvSource, Container, EnvFromSource, HTTPGetAction, PodSpec, PodTemplateSpec, Probe,

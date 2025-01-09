@@ -1,4 +1,5 @@
-use crate::operator::{controller::Context, crd::tunnel::Tunnel};
+use crate::controllers::tunnel::Context;
+use crate::crd::tunnel::Tunnel;
 use k8s_openapi::{api::core::v1::Secret, ByteString};
 use kube::api::{Api, DeleteParams, ObjectMeta, PostParams};
 use std::{collections::BTreeMap, sync::Arc};

@@ -1,4 +1,4 @@
-use crate::operator::crd::credentials::{self, Credentials as CredentialsCrd};
+use crate::crd::credentials::{self, Credentials as CredentialsCrd};
 use async_trait::async_trait;
 use cloudflare::{
     endpoints::cfd_tunnel::{
