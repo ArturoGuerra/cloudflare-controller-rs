@@ -1,4 +1,4 @@
-use crate::controllers::tunnel::Context;
+use crate::controller::tunnel::Context;
 use crate::crd::tunnel::Tunnel;
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::core::v1::{

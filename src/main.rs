@@ -1,13 +1,14 @@
+use kube::Client;
 use kube::CustomResourceExt;
 use std::fs::File;
 use std::io::Write;
 
 pub mod cloudflare;
-pub mod controllers;
+pub mod controller;
 pub mod crd;
 pub mod resources;
 
-use controllers::Controller;
+use controller::Controller;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -32,8 +33,11 @@ async fn main() -> anyhow::Result<()> {
     //    file.write_all(tunnel_ingress_crd.into_bytes().as_ref())
     //        .unwrap();
 
-    let tunnel_controller = controllers::TunnelController::try_default().await?;
-    tunnel_controller.await;
+    //controllers::start().await.unwrap();
+    let client = Client::try_default().await?;
+
+    let ingress_controller = controller::IngressController::try_new(client).await?;
+    ingress_controller.start().await;
 
     Ok(())
 }

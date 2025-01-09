@@ -1,4 +1,4 @@
-use crate::controllers::tunnel::Context;
+use crate::controller::tunnel::Context;
 use kube::api::{Patch, PatchParams};
 use kube::{Api, CustomResource};
 use schemars::JsonSchema;

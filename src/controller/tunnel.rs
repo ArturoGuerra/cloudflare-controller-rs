@@ -24,7 +24,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::time::Duration;
 
-use crate::controllers::Controller;
+use crate::controller::Controller;
 
 const RECONCILE_TIMER: u64 = 60;
 
@@ -284,7 +284,7 @@ impl TunnelController {
         self.0.clone()
     }
 
-    async fn start(self) -> anyhow::Result<()> {
+    pub async fn start(self) -> anyhow::Result<()> {
         println!("Starting Tunnel Controller");
         let deployment_api: Api<Deployment> = Api::all(self.0.kubernetes_client.clone());
         let configmap_api: Api<ConfigMap> = Api::all(self.0.kubernetes_client.clone());
@@ -308,8 +308,8 @@ impl TunnelController {
 
 #[allow(refining_impl_trait)]
 impl Controller for TunnelController {
-    async fn try_default() -> anyhow::Result<impl Controller + IntoFuture> {
-        let context = Context::try_default().await?;
+    async fn try_new(client: Client) -> anyhow::Result<impl Controller + IntoFuture> {
+        let context = Context::try_new(client).await?;
         Ok(Self(Arc::new(context)))
     }
 }
@@ -324,16 +324,15 @@ impl IntoFuture for TunnelController {
 }
 
 impl Context {
-    pub async fn try_default() -> anyhow::Result<Self> {
-        let kubernetes_client = Client::try_default().await?;
+    pub async fn try_new(client: Client) -> anyhow::Result<Self> {
         let cloudflare_client = CloudflareClient::try_default()?;
 
-        let credentials_api: Api<Credentials> = Api::all(kubernetes_client.clone());
-        let tunnel_api: Api<Tunnel> = Api::all(kubernetes_client.clone());
-        let tunnel_ingress_api: Api<TunnelIngress> = Api::all(kubernetes_client.clone());
+        let credentials_api: Api<Credentials> = Api::all(client.clone());
+        let tunnel_api: Api<Tunnel> = Api::all(client.clone());
+        let tunnel_ingress_api: Api<TunnelIngress> = Api::all(client.clone());
 
         Ok(Self {
-            kubernetes_client,
+            kubernetes_client: client,
             cloudflare_client,
             credentials_api,
             tunnel_api,
