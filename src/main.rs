@@ -1,3 +1,4 @@
+use cloudflare::Client as CloudflareClient;
 use kube::Client;
 use kube::CustomResourceExt;
 use std::fs::File;
@@ -35,9 +36,12 @@ async fn main() -> anyhow::Result<()> {
 
     //controllers::start().await.unwrap();
     let client = Client::try_default().await?;
+    let cloudflare_client = CloudflareClient::try_default()?;
 
-    let ingress_controller = controller::IngressController::try_new(client).await?;
-    ingress_controller.start().await;
+    let ingress_controller =
+        controller::IngressController::try_new(client, cloudflare_client).await?;
+
+    ingress_controller.start().await?;
 
     Ok(())
 }
