@@ -3,18 +3,14 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum Error {}
 
+// TODO: Create an interface for this that is bound to the CRD resource.
+
 /*
 * Exported functions:
 * Create
 * Update
 * Delete
 */
-
-pub trait Resource<T> {
-    fn create();
-    fn upgrade();
-    fn delete();
-}
 
 pub mod configmap;
 pub mod deployment;

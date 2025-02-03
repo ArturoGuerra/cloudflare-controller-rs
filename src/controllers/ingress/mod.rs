@@ -1,5 +1,4 @@
 use crate::cloudflare::{Auth, Client as CloudflareClient, CloudflareTunnel};
-use crate::controller::ingress;
 use futures::{Stream, StreamExt, TryFutureExt, TryStream, TryStreamExt};
 use k8s_openapi::api::networking::v1::{Ingress, IngressClass};
 use kube::runtime::controller::Action;
@@ -22,6 +21,18 @@ use tokio::task;
 
 const INGRESS_CONTROLLER: &str = "cloudflare.ar2ro.io/ingress-controller";
 const CLASSLESS_INGRESS_POLICY: bool = false;
+
+trait StoreIngressClassExt<T> {
+    fn ingress_class_names(&self) -> Vec<String>;
+}
+
+trait IngressClassExt {
+    fn controller_name(&self) -> Option<&String>;
+}
+
+trait IngressExt {
+    fn ingress_class_name(&self) -> Option<&String>;
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -51,10 +62,9 @@ impl IntoFuture for IngressController {
     }
 }
 
-// INFO: For now this controller win only work with defined a defined class and classless ingresses
-// will be ignored.
 async fn reconcile(ingress: Arc<Ingress>, ctx: Arc<Context>) -> Result<Action, Error> {
     // Checks if ingress belongs to us and exists early if it doesnt.
+    // INFO: Return early if we don't own this ingress class.
     let ingress_class = match ingress.ingress_class_name() {
         Some(class_name) => {
             let obj_ref = ObjectRef::new(class_name);
@@ -66,13 +76,24 @@ async fn reconcile(ingress: Arc<Ingress>, ctx: Arc<Context>) -> Result<Action, E
         None => return Ok(Action::await_change()),
     };
 
-    // Verify the ingress class is valid, used to get tunnel info.
-    
-    ingress_class.spec.map(|spec| spec.parameters.)
+    // TODO: Add return error that tell the k8s api the ingress class parameters are missing.
+    let ingress_class_parameters = match ingress_class
+        .spec
+        .as_ref()
+        .map(|spec| spec.parameters.as_ref().map(|parameters| parameters))
+        .flatten()
+    {
+        Some(parameters) => parameters,
+        None => return Ok(Action::await_change()),
+    };
 
-    // Check what which action needs to be taken for the given ingress.
+    println!("Api Group: {:?}", ingress_class_parameters.api_group);
+    println!("Kind: {}", ingress_class_parameters.kind);
+    println!("Name: {}", ingress_class_parameters.name);
+    println!("Namespace: {:?}", ingress_class_parameters.namespace);
+    println!("Scope: {:?}", ingress_class_parameters.scope);
 
-    println!("Ingress: {:?}", ingress.name_any());
+    println!("Ingress Name: {:?}", ingress.name_any());
     Ok(Action::requeue(std::time::Duration::from_secs(60)))
 }
 
@@ -80,48 +101,27 @@ fn error_policy<'a>(ingress: Arc<Ingress>, error: &Error, ctx: Arc<Context>) -> 
     Action::requeue(std::time::Duration::from_secs(60))
 }
 
-trait StoreIngressClassExt<T> {
-    fn filtered(&self) -> Vec<Arc<T>>;
-    fn ingress_class_names(&self) -> Vec<String>;
-}
-
-trait IngressClassExt {
-    fn filter(&self, controller_name: &str) -> bool;
-}
-
-trait IngressExt {
-    fn ingress_class_name(&self) -> Option<&String>;
-}
-
 impl StoreIngressClassExt<IngressClass> for Store<IngressClass> {
-    fn filtered(&self) -> Vec<Arc<IngressClass>> {
-        self.state()
-            .into_iter()
-            .filter(|ingress| ingress.filter(INGRESS_CONTROLLER))
-            .collect::<Vec<_>>()
-    }
-
     fn ingress_class_names(&self) -> Vec<String> {
         self.state()
             .into_iter()
-            .filter(|ingress| ingress.filter(INGRESS_CONTROLLER))
+            .filter(|ingress| {
+                ingress
+                    .controller_name()
+                    .map(|controller_name| controller_name.eq(INGRESS_CONTROLLER))
+                    .unwrap_or(false)
+            })
             .map(|ingress| ingress.name_any())
             .collect::<Vec<_>>()
     }
 }
 
 impl IngressClassExt for IngressClass {
-    fn filter(&self, controller_name: &str) -> bool {
-        // TODO: Replace class filter with something that can be overwritten.
+    fn controller_name(&self) -> Option<&String> {
         self.spec
             .as_ref()
-            .map(|spec| {
-                spec.controller
-                    .as_ref()
-                    .map(|controller| controller.eq(controller_name))
-            })
+            .map(|spec| spec.controller.as_ref().map(|controller| controller))
             .flatten()
-            .unwrap_or(CLASSLESS_INGRESS_POLICY)
     }
 }
 
@@ -155,7 +155,6 @@ impl IngressController {
             .touched_objects()
             .for_each(|_| ready(()));
 
-        // NOTE: This is a cheap operation.
         let ingress_class_store_clone = ingress_class_store.clone();
         let ingress_watcher = watcher(ingress_api.clone(), wc.clone())
             .default_backoff()

@@ -1,11 +1,9 @@
-use crate::controller::tunnel::Context;
 use kube::api::{Patch, PatchParams};
 use kube::{Api, CustomResource};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Arc;
 use uuid::Uuid;
 
 const FINALIZER_NAME: &str = "tunnel.cloudflare.ar2ro.io/finalizer";
@@ -34,9 +32,9 @@ pub struct TunnelCrd {
 pub async fn add_finalizer(
     name: &str,
     namespace: &str,
-    context: Arc<Context>,
+    kubernetes_client: kube::Client,
 ) -> Result<Tunnel, kube::Error> {
-    let tunnel_api: Api<Tunnel> = Api::namespaced(context.kubernetes_client.clone(), namespace);
+    let tunnel_api: Api<Tunnel> = Api::namespaced(kubernetes_client.clone(), namespace);
 
     let patch: Value = json!({
         "metadata": {
@@ -57,9 +55,9 @@ pub async fn add_finalizer(
 pub async fn remove_finalizer(
     name: &str,
     namespace: &str,
-    context: Arc<Context>,
+    kubernetes_client: kube::Client,
 ) -> Result<(), kube::Error> {
-    let tunnel_api: Api<Tunnel> = Api::namespaced(context.kubernetes_client.clone(), namespace);
+    let tunnel_api: Api<Tunnel> = Api::namespaced(kubernetes_client.clone(), namespace);
 
     let patch: Value = json!({
         "metadata": {

@@ -1,6 +1,6 @@
 use crate::cloudflare::{Auth, Client as CloudflareClient, CloudflareTunnel};
+use crate::crd::credentials::Credentials;
 use crate::crd::tunnel::{self, Tunnel};
-use crate::crd::{credentials::Credentials, tunnel_configuration::TunnelIngress};
 use crate::resources::{deployment, secret};
 use cloudflare::endpoints::cfd_tunnel::ConfigurationSrc;
 use cloudflare::framework::response::ApiFailure;
@@ -23,8 +23,6 @@ use std::future::IntoFuture;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::time::Duration;
-
-use crate::controller::Controller;
 
 const RECONCILE_TIMER: u64 = 60;
 
@@ -69,7 +67,6 @@ pub struct Context {
     pub cloudflare_client: CloudflareClient,
     pub credentials_api: Api<Credentials>,
     pub tunnel_api: Api<Tunnel>,
-    pub tunnel_ingress_api: Api<TunnelIngress>,
 }
 
 #[inline]
@@ -174,7 +171,7 @@ pub async fn create_tunnel(
         namespace,
         generator.clone(),
         labels.clone(),
-        ctx.clone(),
+        ctx.kubernetes_client.clone(),
     )
     .await
     {
@@ -186,7 +183,7 @@ pub async fn create_tunnel(
         name, namespace, tunnel_token
     );
 
-    match tunnel::add_finalizer(name, namespace, ctx.clone()).await {
+    match tunnel::add_finalizer(name, namespace, ctx.kubernetes_client.clone()).await {
         Ok(_) => Ok(Action::requeue(Duration::from_secs(RECONCILE_TIMER))),
         Err(err) => Err(Error::KubeError(err)),
     }
@@ -233,7 +230,7 @@ async fn delete_tunnel(
         };
     };
 
-    if let Err(err) = deployment::delete(ctx.clone(), name, namespace).await {
+    if let Err(err) = deployment::delete(ctx.kubernetes_client.clone(), name, namespace).await {
         return Err(Error::KubeError(err));
     }
 
@@ -243,7 +240,7 @@ async fn delete_tunnel(
 
     // This should be the last thing we do as the controller wont requeue this resource
     // again
-    match tunnel::remove_finalizer(name, namespace, ctx.clone()).await {
+    match tunnel::remove_finalizer(name, namespace, ctx.kubernetes_client.clone()).await {
         Ok(_) => Ok(Action::await_change()),
         Err(err) => Err(Error::KubeError(err)),
     }
@@ -306,9 +303,8 @@ impl TunnelController {
     }
 }
 
-#[allow(refining_impl_trait)]
-impl Controller for TunnelController {
-    async fn try_new(client: Client) -> anyhow::Result<impl Controller + IntoFuture> {
+impl TunnelController {
+    pub async fn try_new(client: Client) -> anyhow::Result<TunnelController> {
         let context = Context::try_new(client).await?;
         Ok(Self(Arc::new(context)))
     }
@@ -329,14 +325,12 @@ impl Context {
 
         let credentials_api: Api<Credentials> = Api::all(client.clone());
         let tunnel_api: Api<Tunnel> = Api::all(client.clone());
-        let tunnel_ingress_api: Api<TunnelIngress> = Api::all(client.clone());
 
         Ok(Self {
             kubernetes_client: client,
             cloudflare_client,
             credentials_api,
             tunnel_api,
-            tunnel_ingress_api,
         })
     }
 }

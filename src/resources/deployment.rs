@@ -1,4 +1,4 @@
-use crate::controller::tunnel::Context;
+use crate::controllers::tunnel::Context;
 use crate::crd::tunnel::Tunnel;
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::core::v1::{
@@ -7,8 +7,8 @@ use k8s_openapi::api::core::v1::{
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
-use kube::api::{Api, PostParams};
-use kube::api::{DeleteParams, ObjectMeta};
+use kube::api::{Api, DeleteParams, ObjectMeta, PostParams};
+use kube::Client;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ pub async fn create(
     namespace: &str,
     generator: Arc<Tunnel>,
     labels: BTreeMap<String, String>,
-    ctx: Arc<Context>,
+    client: Client,
 ) -> Result<(), kube::Error> {
     let image = match &generator.spec.image {
         Some(image) => image.to_owned(),
@@ -94,7 +94,7 @@ pub async fn create(
         ..Deployment::default()
     };
 
-    let deployment_api: Api<Deployment> = Api::namespaced(ctx.kubernetes_client.clone(), namespace);
+    let deployment_api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
     match deployment_api
         .create(&PostParams::default(), &deployment)
         .await
@@ -104,8 +104,8 @@ pub async fn create(
     }
 }
 
-pub async fn delete(ctx: Arc<Context>, name: &str, namespace: &str) -> Result<(), kube::Error> {
-    let deployment_api: Api<Deployment> = Api::namespaced(ctx.kubernetes_client.clone(), namespace);
+pub async fn delete(client: Client, name: &str, namespace: &str) -> Result<(), kube::Error> {
+    let deployment_api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
     match deployment_api.delete(name, &DeleteParams::default()).await {
         Ok(_) => Ok(()),
