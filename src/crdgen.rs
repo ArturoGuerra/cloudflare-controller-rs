@@ -4,7 +4,6 @@ use std::{env, fs::File, io::Write, path::Path};
 pub mod cloudflare;
 pub mod controllers;
 pub mod crd;
-pub mod resources;
 
 fn main() {
     let current_dir = env::current_dir().unwrap();

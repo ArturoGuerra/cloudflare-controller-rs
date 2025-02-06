@@ -1,7 +1,6 @@
-use crate::cloudflare::{Auth, Client as CloudflareClient, CloudflareTunnel};
+use crate::cloudflare::{auth::Auth, tunnel::CloudflareTunnel, Client as CloudflareClient};
 use crate::crd::credentials::Credentials;
-use crate::crd::tunnel::{self, Tunnel};
-use crate::resources::{deployment, secret};
+use crate::crd::tunnel::Tunnel;
 use cloudflare::endpoints::cfd_tunnel::ConfigurationSrc;
 use cloudflare::framework::response::ApiFailure;
 use futures::{Future, StreamExt};
@@ -13,6 +12,7 @@ use k8s_openapi::ByteString;
 use kube::api::{Patch, PatchParams};
 use kube::core::object::HasSpec;
 use kube::runtime::controller::Action;
+use kube::runtime::reflector::Lookup;
 use kube::{
     client::Client, runtime::watcher::Config, runtime::Controller as KubeController, Api, Resource,
     ResourceExt,
@@ -70,12 +70,9 @@ pub struct Context {
 }
 
 #[inline]
-pub async fn create_tunnel(
-    generator: Arc<Tunnel>,
-    ctx: Arc<Context>,
-    name: &str,
-    namespace: &str,
-) -> Result<Action, Error> {
+pub async fn create_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<Action, Error> {
+    let name = generator.name_any();
+    let namespace = generator.metadata.namespace.clone().unwrap();
     let auth: Auth = match ctx
         .credentials_api
         .get_opt(&generator.spec.credentials)
@@ -110,17 +107,17 @@ pub async fn create_tunnel(
 
         None => match ctx
             .cloudflare_client
-            .create_tunnel(&auth, name, tunnel_secret, ConfigurationSrc::Cloudflare)
+            .create_tunnel(&auth, &name, tunnel_secret, ConfigurationSrc::Cloudflare)
             .await
         {
             Ok(tunnel) => {
                 let crd_api: Api<Tunnel> =
-                    Api::namespaced(ctx.kubernetes_client.clone(), namespace);
+                    Api::namespaced(ctx.kubernetes_client.clone(), &namespace);
 
                 let mut crd = (*generator).clone();
                 crd.spec.uuid = Some(tunnel.id);
                 let patch: Patch<Tunnel> = Patch::Merge(crd);
-                match crd_api.patch(name, &PatchParams::default(), &patch).await {
+                match crd_api.patch(&name, &PatchParams::default(), &patch).await {
                     Ok(_) => tunnel,
                     Err(err) => return Err(Error::KubeError(err)),
                 }
@@ -139,7 +136,7 @@ pub async fn create_tunnel(
     };
 
     let mut labels = BTreeMap::new();
-    labels.insert("app.kubernetes.io/name".into(), name.into());
+    labels.insert("app.kubernetes.io/name".into(), name.clone());
     labels.insert(
         "app.kubernetes.io/managed-by".into(),
         "cloudflare-tunnel-operator".into(),
@@ -153,27 +150,9 @@ pub async fn create_tunnel(
 
     println!("Okay we should start creating our resources now!");
 
-    if let Err(err) = secret::create(
-        name,
-        namespace,
-        generator.clone(),
-        ctx.clone(),
-        labels.clone(),
-        secrets,
-    )
-    .await
-    {
-        return Err(Error::KubeError(err));
-    }
-
-    if let Err(err) = deployment::create(
-        name,
-        namespace,
-        generator.clone(),
-        labels.clone(),
-        ctx.kubernetes_client.clone(),
-    )
-    .await
+    if let Err(err) = generator
+        .create_resources(ctx.kubernetes_client.clone(), labels, secrets)
+        .await
     {
         return Err(Error::KubeError(err));
     }
@@ -183,19 +162,14 @@ pub async fn create_tunnel(
         name, namespace, tunnel_token
     );
 
-    match tunnel::add_finalizer(name, namespace, ctx.kubernetes_client.clone()).await {
+    match generator.add_finalizer(ctx.kubernetes_client.clone()).await {
         Ok(_) => Ok(Action::requeue(Duration::from_secs(RECONCILE_TIMER))),
         Err(err) => Err(Error::KubeError(err)),
     }
 }
 
 #[inline]
-async fn delete_tunnel(
-    generator: Arc<Tunnel>,
-    ctx: Arc<Context>,
-    name: &str,
-    namespace: &str,
-) -> Result<Action, Error> {
+async fn delete_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<Action, Error> {
     if let Some(uuid) = generator.spec.uuid {
         match ctx
             .credentials_api
@@ -230,37 +204,30 @@ async fn delete_tunnel(
         };
     };
 
-    if let Err(err) = deployment::delete(ctx.kubernetes_client.clone(), name, namespace).await {
-        return Err(Error::KubeError(err));
-    }
-
-    if let Err(err) = secret::delete(ctx.clone(), name, namespace).await {
+    if let Err(err) = generator
+        .delete_resources(ctx.kubernetes_client.clone())
+        .await
+    {
         return Err(Error::KubeError(err));
     }
 
     // This should be the last thing we do as the controller wont requeue this resource
     // again
-    match tunnel::remove_finalizer(name, namespace, ctx.kubernetes_client.clone()).await {
+    match generator
+        .remove_finalizer(ctx.kubernetes_client.clone())
+        .await
+    {
         Ok(_) => Ok(Action::await_change()),
         Err(err) => Err(Error::KubeError(err)),
     }
 }
 
 pub async fn reconciler(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<Action, Error> {
-    let namespace: String = match generator.namespace() {
-        Some(namespace) => namespace,
-        None => return Err(Error::MissingNamespace("Tunnel")),
-    };
-
-    let name = generator.name_any();
-
-    println!("Processing ({}) from ({})", &name, &namespace);
-
     let action = TunnelAction::from(&generator);
     println!("Action: {:?}", &action);
     match action {
-        TunnelAction::Create => create_tunnel(generator, ctx, &name, &namespace).await,
-        TunnelAction::Delete => delete_tunnel(generator, ctx, &name, &namespace).await,
+        TunnelAction::Create => create_tunnel(generator, ctx).await,
+        TunnelAction::Delete => delete_tunnel(generator, ctx).await,
         TunnelAction::Sync => Ok(Action::requeue(Duration::from_secs(RECONCILE_TIMER))),
     }
 }
