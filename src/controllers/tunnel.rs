@@ -12,7 +12,6 @@ use k8s_openapi::ByteString;
 use kube::api::{Patch, PatchParams};
 use kube::core::object::HasSpec;
 use kube::runtime::controller::Action;
-use kube::runtime::reflector::Lookup;
 use kube::{
     client::Client, runtime::watcher::Config, runtime::Controller as KubeController, Api, Resource,
     ResourceExt,

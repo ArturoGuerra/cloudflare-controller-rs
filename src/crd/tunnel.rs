@@ -158,15 +158,13 @@ impl Tunnel {
 
         let deployment_api: Api<Secret> = Api::namespaced(kubernetes_client.clone(), &namespace);
 
-        match deployment_api.delete(&name, &deleteparams).await {
-            Ok(_) => {}
-            Err(err) => return Err(err),
+        if let Err(err) = deployment_api.delete(&name, &deleteparams).await {
+            return Err(err);
         };
 
         let secret_api: Api<Secret> = Api::namespaced(kubernetes_client.clone(), &namespace);
-        match secret_api.delete(&name, &deleteparams).await {
-            Ok(_) => {}
-            Err(err) => return Err(err),
+        if let Err(err) = secret_api.delete(&name, &deleteparams).await {
+            return Err(err);
         };
 
         Ok(())
