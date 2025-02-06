@@ -1,5 +1,5 @@
 use kube::CustomResourceExt;
-use std::{env, fs::File, io::Write, path::Path};
+use std::{env, fs::File, io::Write};
 
 pub mod cloudflare;
 pub mod controllers;

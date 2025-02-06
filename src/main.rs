@@ -1,8 +1,5 @@
 use cloudflare::Client as CloudflareClient;
 use kube::Client as K8sClient;
-use kube::CustomResourceExt;
-use std::fs::File;
-use std::io::Write;
 
 use futures::try_join;
 
