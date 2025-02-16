@@ -1,0 +1,18 @@
+[package]
+name = "tunnel-controller"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+futures.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+serde.workspace = true
+kube-derive.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+cloudflare.workspace = true
+cloudflarext = { path = "../cloudflarext" }

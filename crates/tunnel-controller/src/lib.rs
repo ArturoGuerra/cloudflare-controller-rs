@@ -1,8 +1,8 @@
-use crate::cloudflare::{auth::Auth, tunnel::CloudflareTunnel, Client as CloudflareClient};
 use crate::crd::credentials::Credentials;
 use crate::crd::tunnel::Tunnel;
 use cloudflare::endpoints::cfd_tunnel::ConfigurationSrc;
 use cloudflare::framework::response::ApiFailure;
+use cloudflarext::{cfd_tunnel::CloudflaredTunnel, AuthlessClient as CloudflareClient};
 use futures::{Future, StreamExt};
 use k8s_openapi::api::{
     apps::v1::Deployment,
@@ -22,6 +22,8 @@ use std::future::IntoFuture;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::time::Duration;
+
+mod crd;
 
 const RECONCILE_TIMER: u64 = 60;
 

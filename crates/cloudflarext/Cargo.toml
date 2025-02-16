@@ -1,0 +1,10 @@
+[package]
+name = "cloudflarext"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cloudflare.workspace = true
+reqwest.workspace = true
+http = "1"
+uuid.workspace = true

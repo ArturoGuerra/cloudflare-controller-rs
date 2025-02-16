@@ -22,7 +22,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 const INGRESS_CONTROLLER: &str = "cloudflare.ar2ro.io/ingress-controller";
-const CLASSLESS_INGRESS_POLICY: bool = false;
 
 trait StoreIngressClassExt<T> {
     fn ingress_class_names(&self) -> Vec<String>;

@@ -1,7 +1,0 @@
-apiVersion: cloudflare.ar2ro.io/v1
-kind: CfTunnel
-metadata:
-  name: test-tunnel
-spec:
-  replicas: 1
-  credentials: crd-test-token
