@@ -44,6 +44,11 @@ pub struct Resources {
 }
 
 impl Tunnel {
+    #[inline]
+    pub fn get_uuid(&self) -> Option<uuid::Uuid> {
+        self.spec.uuid
+    }
+
     pub async fn create_resources(
         &self,
         kubernetes_client: kube::Client,

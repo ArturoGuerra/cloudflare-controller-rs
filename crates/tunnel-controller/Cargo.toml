@@ -15,4 +15,6 @@ kube-derive.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
 cloudflare.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
 cloudflarext = { path = "../cloudflarext" }

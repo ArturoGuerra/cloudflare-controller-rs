@@ -61,6 +61,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.95"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34ac096ce696dc2fcabef30516bb13c0a68a11d30131d3df6f04711467681b04"
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1067,6 +1073,17 @@ dependencies = [
 [[package]]
 name = "ingress-controller"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cloudflare",
+ "cloudflarext",
+ "futures",
+ "k8s-openapi",
+ "kube",
+ "thiserror 2.0.11",
+ "tokio",
+ "tunnel-controller",
+]
 
 [[package]]
 name = "instant"
@@ -2384,6 +2401,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "tunnel-controller"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cloudflare",
  "cloudflarext",
  "futures",
@@ -2396,6 +2414,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.11",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

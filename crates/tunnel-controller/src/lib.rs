@@ -1,7 +1,7 @@
-use crate::crd::credentials::Credentials;
+use crate::crd::credentials::{Credentials, CredentialsApiExt};
 use crate::crd::tunnel::Tunnel;
-use cloudflare::endpoints::cfd_tunnel::ConfigurationSrc;
 use cloudflare::framework::response::ApiFailure;
+use cloudflare::{endpoints::cfd_tunnel::ConfigurationSrc, framework::HttpApiClientConfig};
 use cloudflarext::{cfd_tunnel::CloudflaredTunnel, AuthlessClient as CloudflareClient};
 use futures::{Future, StreamExt};
 use k8s_openapi::api::{
@@ -12,6 +12,7 @@ use k8s_openapi::ByteString;
 use kube::api::{Patch, PatchParams};
 use kube::core::object::HasSpec;
 use kube::runtime::controller::Action;
+use kube::runtime::reflector::Store;
 use kube::{
     client::Client, runtime::watcher::Config, runtime::Controller as KubeController, Api, Resource,
     ResourceExt,
@@ -23,9 +24,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::time::Duration;
 
-mod crd;
+pub mod crd;
 
 const RECONCILE_TIMER: u64 = 60;
+const DEFAULT_ANNOTATION: &str = "cloudflare.ar2ro.io/default-tunnel";
 
 /// All errors possible to occur during reconciliation
 #[derive(Debug, thiserror::Error)]
@@ -42,7 +44,49 @@ pub enum Error {
     MissingCredentials(String),
 }
 
-pub struct TunnelController(Arc<Context>);
+pub trait TunnelStoreExt {
+    fn default_tunnel(&self) -> Option<Arc<Tunnel>>;
+}
+
+impl TunnelStoreExt for Store<Tunnel> {
+    // INFO: If more than one tunnel is marked a default a None is returned.
+    fn default_tunnel(&self) -> Option<Arc<Tunnel>> {
+        let mut tunnels: Vec<Arc<Tunnel>> = self
+            .state()
+            .into_iter()
+            .filter(|tunnel| {
+                tunnel
+                    .metadata
+                    .annotations
+                    .as_ref()
+                    .map_or(false, |annotations| {
+                        annotations
+                            .get(DEFAULT_ANNOTATION)
+                            .map_or(false, |v| v.to_lowercase().eq("true"))
+                    })
+            })
+            .collect::<_>();
+
+        match tunnels.len() {
+            1 => tunnels.pop(),
+            _ => None,
+        }
+    }
+}
+
+pub struct TunnelController {
+    kubernetes_client: Client,
+    cloudflare_client: CloudflareClient,
+    tunnel_api: Api<Tunnel>,
+    controller: KubeController<Tunnel>,
+}
+
+pub struct Context {
+    kubernetes_client: Client,
+    cloudflare_client: CloudflareClient,
+    credentials_api: Api<Credentials>,
+    tunnel_api: Api<Tunnel>,
+}
 
 #[derive(Debug)]
 enum TunnelAction {
@@ -63,32 +107,14 @@ impl From<&Arc<Tunnel>> for TunnelAction {
     }
 }
 
-pub struct Context {
-    pub kubernetes_client: Client,
-    pub cloudflare_client: CloudflareClient,
-    pub credentials_api: Api<Credentials>,
-    pub tunnel_api: Api<Tunnel>,
-}
-
 #[inline]
 pub async fn create_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<Action, Error> {
     let name = generator.name_any();
     let namespace = generator.metadata.namespace.clone().unwrap();
-    let auth: Auth = match ctx
+    let (account_id, credentials) = ctx
         .credentials_api
-        .get_opt(&generator.spec.credentials)
-        .await
-    {
-        Ok(result) => match result {
-            Some(credentials) => credentials.into(),
-            None => {
-                return Err(Error::MissingCredentials(
-                    generator.spec.credentials.clone(),
-                ))
-            }
-        },
-        Err(err) => return Err(Error::KubeError(err)),
-    };
+        .get_credentials(&generator.spec.credentials)
+        .await?;
 
     let tunnel_secret = generator
         .spec
@@ -96,10 +122,12 @@ pub async fn create_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<
         .as_ref()
         .map(|bytes| bytes.as_bytes());
 
+    // INFO: Gets or creates a tunnel and requeues the tunnel crd if a tunnel is created to get the
+    // latest metadata from kubernetes.
     let tunnel = match generator.spec.uuid {
         Some(uuid) => match ctx
             .cloudflare_client
-            .get_tunnel(&auth, uuid.to_string().as_ref())
+            .get_tunnel(&credentials, &account_id, uuid.to_string().as_ref())
             .await
         {
             Ok(tunnel) => tunnel,
@@ -108,7 +136,13 @@ pub async fn create_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<
 
         None => match ctx
             .cloudflare_client
-            .create_tunnel(&auth, &name, tunnel_secret, ConfigurationSrc::Cloudflare)
+            .create_tunnel(
+                &credentials,
+                &account_id,
+                &name,
+                tunnel_secret,
+                ConfigurationSrc::Cloudflare,
+            )
             .await
         {
             Ok(tunnel) => {
@@ -119,7 +153,7 @@ pub async fn create_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<
                 crd.spec.uuid = Some(tunnel.id);
                 let patch: Patch<Tunnel> = Patch::Merge(crd);
                 match crd_api.patch(&name, &PatchParams::default(), &patch).await {
-                    Ok(_) => tunnel,
+                    Ok(_) => return Ok(Action::requeue(std::time::Duration::from_secs(0))),
                     Err(err) => return Err(Error::KubeError(err)),
                 }
             }
@@ -129,7 +163,7 @@ pub async fn create_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<
 
     let tunnel_token: String = match ctx
         .cloudflare_client
-        .get_tunnel_token(&auth, tunnel.id.to_string().as_ref())
+        .get_tunnel_token(&credentials, &account_id, tunnel.id.to_string().as_ref())
         .await
     {
         Ok(token) => token.into(),
@@ -171,36 +205,30 @@ pub async fn create_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<
 
 #[inline]
 async fn delete_tunnel(generator: Arc<Tunnel>, ctx: Arc<Context>) -> Result<Action, Error> {
-    if let Some(uuid) = generator.spec.uuid {
-        match ctx
+    if let Some(uuid) = generator.get_uuid() {
+        let (account_id, credentials) = ctx
             .credentials_api
-            .get_opt(&generator.spec().credentials)
+            .get_credentials(&generator.spec().credentials)
+            .await?;
+        if let Err(err) = ctx
+            .cloudflare_client
+            .delete_tunnel(&credentials, &account_id, uuid)
             .await
         {
-            Ok(credentials) => {
-                if let Some(credentials) = credentials {
-                    let auth: Auth = credentials.into();
-                    if let Err(err) = ctx.cloudflare_client.delete_tunnel(&auth, uuid).await {
-                        match &err {
-                            ApiFailure::Error(status, errors) => match *status {
-                                StatusCode::NOT_FOUND => println!(
-                                "Ignoring cloudflare NotFound errors while deleting tunnel, {:?}",
-                                errors
-                            ),
+            match &err {
+                ApiFailure::Error(status, errors) => match *status {
+                    StatusCode::NOT_FOUND => println!(
+                        "Ignoring cloudflare NotFound errors while deleting tunnel, {:?}",
+                        errors
+                    ),
 
-                                StatusCode::FORBIDDEN => println!(
-                                "Ignoring cloudflare Forbidden errors while deleting tunnel, {:?}",
-                                errors
-                            ),
-                                _ => return Err(Error::CloudflareApiFailure(err)),
-                            },
-                            _ => return Err(Error::CloudflareApiFailure(err)),
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(Error::KubeError(err));
+                    StatusCode::FORBIDDEN => println!(
+                        "Ignoring cloudflare Forbidden errors while deleting tunnel, {:?}",
+                        errors
+                    ),
+                    _ => return Err(Error::CloudflareApiFailure(err)),
+                },
+                _ => return Err(Error::CloudflareApiFailure(err)),
             }
         };
     };
@@ -245,20 +273,25 @@ pub fn on_err(_generator: Arc<Tunnel>, error: &Error, _ctx: Arc<Context>) -> Act
 }
 
 impl TunnelController {
-    pub fn get_context(&self) -> Arc<Context> {
-        self.0.clone()
-    }
-
     pub async fn start(self) -> anyhow::Result<()> {
         println!("Starting Tunnel Controller");
-        let deployment_api: Api<Deployment> = Api::all(self.0.kubernetes_client.clone());
-        let configmap_api: Api<ConfigMap> = Api::all(self.0.kubernetes_client.clone());
-        let secret_api: Api<Secret> = Api::all(self.0.kubernetes_client.clone());
-        KubeController::new(self.0.tunnel_api.clone(), Config::default())
+        let deployment_api: Api<Deployment> = Api::all(self.kubernetes_client.clone());
+        let configmap_api: Api<ConfigMap> = Api::all(self.kubernetes_client.clone());
+        let secret_api: Api<Secret> = Api::all(self.kubernetes_client.clone());
+        let credentials_api: Api<Credentials> = Api::all(self.kubernetes_client.clone());
+
+        let ctx = Arc::new(Context {
+            kubernetes_client: self.kubernetes_client,
+            cloudflare_client: self.cloudflare_client,
+            credentials_api,
+            tunnel_api: self.tunnel_api,
+        });
+
+        self.controller
             .owns(deployment_api, Config::default())
             .owns(configmap_api, Config::default())
             .owns(secret_api, Config::default())
-            .run(reconciler, on_err, self.0.clone())
+            .run(reconciler, on_err, ctx)
             .for_each(|result| async move {
                 match result {
                     Ok(result) => println!("Successfully reconciled tunnel: {:?}", result),
@@ -272,9 +305,24 @@ impl TunnelController {
 }
 
 impl TunnelController {
-    pub async fn try_new(client: Client) -> anyhow::Result<TunnelController> {
-        let context = Context::try_new(client).await?;
-        Ok(Self(Arc::new(context)))
+    pub async fn try_new(
+        kubernetes_client: Client,
+        cloudflare_client: CloudflareClient,
+    ) -> anyhow::Result<TunnelController> {
+        let tunnel_api: Api<Tunnel> = Api::all(kubernetes_client.clone());
+
+        let controller = KubeController::new(tunnel_api.clone(), Config::default());
+
+        Ok(Self {
+            kubernetes_client,
+            cloudflare_client,
+            tunnel_api,
+            controller,
+        })
+    }
+
+    pub fn store(&self) -> Store<Tunnel> {
+        self.controller.store()
     }
 }
 
@@ -284,21 +332,5 @@ impl IntoFuture for TunnelController {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.start())
-    }
-}
-
-impl Context {
-    pub async fn try_new(client: Client) -> anyhow::Result<Self> {
-        let cloudflare_client = CloudflareClient::try_default()?;
-
-        let credentials_api: Api<Credentials> = Api::all(client.clone());
-        let tunnel_api: Api<Tunnel> = Api::all(client.clone());
-
-        Ok(Self {
-            kubernetes_client: client,
-            cloudflare_client,
-            credentials_api,
-            tunnel_api,
-        })
     }
 }

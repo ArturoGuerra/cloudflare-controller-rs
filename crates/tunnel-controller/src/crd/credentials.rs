@@ -1,3 +1,6 @@
+use crate::Error;
+use cloudflare::framework::auth::Credentials as CloudflareCredentials;
+use kube::Api;
 use kube_derive::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,4 +28,34 @@ pub enum AuthKind {
 pub struct CredentialsCrd {
     pub account_id: String,
     pub auth: AuthKind,
+}
+
+#[allow(async_fn_in_trait)]
+pub trait CredentialsApiExt {
+    async fn get_credentials(&self, name: &str) -> Result<(String, CloudflareCredentials), Error>;
+}
+
+impl From<Credentials> for (String, CloudflareCredentials) {
+    fn from(item: Credentials) -> (String, CloudflareCredentials) {
+        let account_id = item.spec.account_id;
+
+        let credentials = match item.spec.auth {
+            AuthKind::UserAuthToken(token) => CloudflareCredentials::UserAuthToken { token },
+            AuthKind::UserAuthKey { email, key } => {
+                CloudflareCredentials::UserAuthKey { email, key }
+            }
+            AuthKind::ServiceKey(key) => CloudflareCredentials::Service { key },
+        };
+
+        (account_id, credentials)
+    }
+}
+
+impl CredentialsApiExt for Api<Credentials> {
+    async fn get_credentials(&self, name: &str) -> Result<(String, CloudflareCredentials), Error> {
+        match self.get_opt(name).await.map_err(Error::KubeError)? {
+            Some(credentials) => Ok(credentials.into()),
+            None => Err(Error::MissingCredentials(name.to_string())),
+        }
+    }
 }

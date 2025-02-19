@@ -4,3 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+cloudflare.workspace = true
+cloudflarext = { path = "../cloudflarext" }
+futures.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tunnel-controller = { path = "../tunnel-controller" }
